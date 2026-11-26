@@ -2190,6 +2190,7 @@
       if (activeThreadRoot) closeThreadDrawer({ rerender: false, immediate: true });
     }
     view = next; current = next === "ext" ? null : id;
+    livePageTarget = next === "pane" || (next === "ext" && !id.startsWith("h:")) ? id : null;
     const nextKey = routeKeyFor(next, id);
     const byIdx = wasExistingIdx ? scrollByIdx.get(navCur) : null;
     const saved = (byIdx && byIdx.routeKey === nextKey ? byIdx : null)
@@ -7868,6 +7869,19 @@
   // (other apps' resting conversations and ended herdr sessions, merged).
   // Which computer something is on is a detail on its row.
   const RECENT_N = 8;
+  const LIVE_PAGE_SIZE = 8;
+  let livePage = 1, livePageTarget = null;
+  const liveGroup = $("#live-group");
+  liveGroup.open = store.get("liveGroupOpen", true);
+  liveGroup.addEventListener("toggle", () => store.set("liveGroupOpen", liveGroup.open));
+  function showLivePage(page) {
+    livePageTarget = null;
+    livePage = page;
+    renderSessions();
+  }
+  $("#live-prev").addEventListener("click", () => showLivePage(livePage - 1));
+  $("#live-next").addEventListener("click", () => showLivePage(livePage + 1));
+  $("#live-page").addEventListener("change", (ev) => showLivePage(Number(ev.target.value)));
   let extAll = store.get("extAll", false);
   const EXT_STATE = { working: "在干活", waiting: "在等后台任务", idle: "开着，在等你", blocked: "等电脑那边确认" };
   const RANK = { working: 0, waiting: 0.5, starting: 1, blocked: 2, done: 3, unknown: 4, idle: 4 };
@@ -7898,13 +7912,34 @@
     // background, nothing running) is listed under 最近 by its time, its dot
     // saying it is still open.
     const going = (e) => e.live && e.status !== "idle" && e.status !== "unknown";
-    const panes = state.agents.filter((a) => a.name !== ROUTER && a.status !== "blocked")
-      .map((a) => ({ rank: RANK[a.status] ?? 3, done: a.status === "done", html: itemHTML(a, wtMap, entries), on: view === "pane" && a.pane_id === current }));
-    const liveExt = ext.filter(going).map((e) => ({ rank: RANK[e.status] ?? 3, done: e.status === "done", html: extRow(e), on: view === "ext" && extCur === e.id }));
-    const live = [...panes, ...liveExt].sort((x, y) => x.rank - y.rank);
-    const busy = live.filter((x) => x.rank <= 1).length;
-    setText($("#live-count"), busy ? `${busy} 个在跑` : live.length || "");
-    setHTML($("#live-list"), live.map((x) => x.html).join("")
+    const panes = state.agents.filter((a) => a.name !== ROUTER && a.status !== "blocked");
+    const rank = (s) => RANK[s.status] ?? 3;
+    const live = [...panes, ...ext.filter(going)].sort((a, b) => rank(a) - rank(b));
+    const busy = live.filter((s) => rank(s) <= 1).length;
+    setText($("#live-count"), live.length ? `共 ${live.length} 个${busy ? ` · ${busy} 个在跑` : ""}` : "");
+
+    const pages = Math.max(1, Math.ceil(live.length / LIVE_PAGE_SIZE));
+    // A deep link may resolve after the first poll. Reveal it once, then let
+    // the viewer browse other pages while the selected conversation stays open.
+    if (livePageTarget) {
+      const index = live.findIndex((s) => (view === "pane" ? s.pane_id : s.id) === livePageTarget);
+      if (index >= 0) {
+        livePage = Math.floor(index / LIVE_PAGE_SIZE) + 1;
+        livePageTarget = null;
+      }
+    }
+    livePage = Math.max(1, Math.min(livePage, pages));
+    $("#live-pages").hidden = pages === 1;
+    $("#live-prev").disabled = livePage === 1;
+    $("#live-next").disabled = livePage === pages;
+    const picker = $("#live-page");
+    if (picker.length !== pages) {
+      setHTML(picker, Array.from({ length: pages }, (_, i) => `<option value="${i + 1}">${i + 1} / ${pages}</option>`).join(""));
+    }
+    if (picker.value !== String(livePage)) picker.value = String(livePage);
+    const offset = (livePage - 1) * LIVE_PAGE_SIZE;
+    setHTML($("#live-list"), live.slice(offset, offset + LIVE_PAGE_SIZE)
+      .map((s) => s.pane_id ? itemHTML(s, wtMap, entries) : extRow(s)).join("")
       || `<li class="empty-hint">没有在跑的会话。点右上角 + 新建，或让 Collie 派一个。</li>`);
 
     // 最近: newest first; Collie's own sessions are reached from its conversation.

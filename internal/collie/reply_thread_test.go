@@ -1398,6 +1398,34 @@ const settle = async (n = 8) => { for (let i = 0; i < n; i++) await flush(); };
   assert.equal(pendListWrites(), 0, "idle renderSuper() must not rewrite collapsed #pending-list.innerHTML");
   assert.equal(innerWrites, mainWritesBefore, "idle renderSuper() must not rewrite #super-thread.innerHTML");
 
+  // Keep manual pagination stable across state events, including when the last page disappears.
+  const pagedAgents = Array.from({ length: 17 }, (_, i) => ({
+    ...sampleAgents[0], pane_id: "page-" + i, name: "agent-" + i,
+  }));
+  const updateAgents = (agents) => {
+    T.setState({ ok: true, agents, shells: [] });
+    T.renderSide();
+  };
+  const pageRows = () => [...getEl("#live-list").innerHTML.matchAll(/href="#\/p\/page-(\d+)"/g)].map((m) => Number(m[1]));
+  updateAgents(pagedAgents);
+  assert.deepEqual(pageRows(), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(getEl("#live-prev").disabled, true);
+  getEl("#live-next").dispatch("click");
+  T.renderSide();
+  assert.deepEqual(pageRows(), [8, 9, 10, 11, 12, 13, 14, 15]);
+  getEl("#live-page").value = "3";
+  getEl("#live-page").dispatch("change");
+  assert.deepEqual(pageRows(), [16]);
+  assert.equal(getEl("#live-next").disabled, true);
+  updateAgents(pagedAgents.slice(0, 9));
+  assert.deepEqual(pageRows(), [8]);
+  getEl("#live-prev").dispatch("click");
+  assert.equal(getEl("#live-page").value, "1");
+  updateAgents(pagedAgents.slice(0, 8));
+  assert.equal(getEl("#live-pages").hidden, true);
+  updateAgents([]);
+  assert.match(getEl("#live-list").innerHTML, /empty-hint/);
+
   console.log("OK: all reply-thread, focus-drawer, filter, agent-card, worker-fold, memoization, settings, and notification JS tests passed");
 })().catch((err) => {
   console.error(err);

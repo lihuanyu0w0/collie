@@ -73,10 +73,15 @@
         <h2>需要你</h2>
         <ul class="list attn" id="attention"></ul>
       </section>
-      <section class="group" id="live-group">
-        <h2>进行中 <span class="count" id="live-count"></span></h2>
+      <details class="group" id="live-group" open>
+        <summary><h2>进行中 <span class="count" id="live-count"></span></h2></summary>
+        <nav class="live-pages" id="live-pages" aria-label="进行中会话分页" hidden>
+          <button type="button" class="btn small ghost" id="live-prev" aria-controls="live-list">上一页</button>
+          <select id="live-page" data-native aria-label="进行中会话页码" aria-controls="live-list"></select>
+          <button type="button" class="btn small ghost" id="live-next" aria-controls="live-list">下一页</button>
+        </nav>
         <ul class="list" id="live-list"></ul>
-      </section>
+      </details>
       <section class="group" id="recent-group" hidden>
         <h2>最近</h2>
         <ul class="list" id="recent-list"></ul>
