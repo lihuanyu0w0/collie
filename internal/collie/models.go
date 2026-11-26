@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -680,8 +681,25 @@ func findBin(name, home string) string {
 			}
 		}
 	}
+	if found == "" && name == "codex" {
+		found = desktopCodex(home)
+	}
 	if found != "" {
 		binCache.Store(name, found)
 	}
 	return found
+}
+
+// The ChatGPT desktop app bundles Codex without installing it on PATH.
+func desktopCodex(home string) string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	for _, dir := range []string{filepath.Join(home, "Applications"), "/Applications"} {
+		path := filepath.Join(dir, "ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+		if bin, err := exec.LookPath(path); err == nil && filepath.IsAbs(bin) {
+			return bin
+		}
+	}
+	return ""
 }

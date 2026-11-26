@@ -9,7 +9,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -72,6 +74,11 @@ func startHerdrServer() bool {
 	}
 	cmd := exec.Command(bin, "server")
 	cmd.Dir = home
+	// herdr starts agents by name in a shell that inherits its PATH.
+	if codex := desktopCodex(home); codex != "" {
+		dirs := append(filepath.SplitList(os.Getenv("PATH")), filepath.Dir(codex))
+		cmd.Env = append(cmd.Environ(), "PATH="+strings.Join(dirs, string(os.PathListSeparator)))
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // outlives us, like the one a terminal starts
 	if err := cmd.Start(); err != nil {
 		log.Printf("start herdr server: %v", err)

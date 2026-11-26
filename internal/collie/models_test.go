@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -342,5 +343,49 @@ func TestParseAndFetchDoubaoModels(t *testing.T) {
 	}
 	if !reflect.DeepEqual(info.Efforts, []string{"low", "medium", "high"}) {
 		t.Fatalf("info.Efforts = %#v, want [low medium high]", info.Efforts)
+	}
+}
+
+func TestDesktopCodexFallback(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bundled := writeFakeCLIScript(t, dir, "codex", "exit 0")
+	if runtime.GOOS != "darwin" {
+		if got := desktopCodex(home); got != "" {
+			t.Fatalf("unexpected macOS bundle on %s: %s", runtime.GOOS, got)
+		}
+		return
+	}
+	if got := desktopCodex(home); got != bundled {
+		t.Fatalf("desktopCodex = %q, want %q", got, bundled)
+	}
+	pathDir := t.TempDir()
+	t.Setenv("PATH", pathDir)
+	t.Setenv("SHELL", "/usr/bin/false")
+	old, ok := binCache.LoadAndDelete("codex")
+	t.Cleanup(func() {
+		binCache.Delete("codex")
+		if ok {
+			binCache.Store("codex", old)
+		}
+	})
+	// Developer machines may already have a system-wide standalone installation.
+	want := bundled
+	for _, system := range []string{"/opt/homebrew/bin/codex", "/usr/local/bin/codex"} {
+		if isFile(system) {
+			want = system
+			break
+		}
+	}
+	if got := findBin("codex", home); got != want {
+		t.Fatalf("findBin with launchd PATH = %q, want %q", got, want)
+	}
+	binCache.Delete("codex")
+	standalone := writeFakeCLIScript(t, pathDir, "codex", "exit 0")
+	if got := findBin("codex", home); got != standalone {
+		t.Fatalf("findBin = %q, want standalone CLI %q", got, standalone)
 	}
 }

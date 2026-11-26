@@ -288,7 +288,17 @@ check_herdr() {
   fi
   if ! "$hb" status 2>/dev/null | grep -q "status: running"; then
     # Collie needs herdr's server (its socket), not a terminal UI.
-    nohup "$hb" server >/dev/null 2>&1 </dev/null &
+    herdr_path=$PATH
+    if [ "$os" = darwin ] && ! command -v codex >/dev/null 2>&1; then
+      for apps in "$HOME/Applications" /Applications; do
+        dir="$apps/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS"
+        if [ -f "$dir/codex" ] && [ -x "$dir/codex" ]; then
+          herdr_path="${herdr_path:+$herdr_path:}$dir"
+          break
+        fi
+      done
+    fi
+    PATH="$herdr_path" nohup "$hb" server >/dev/null 2>&1 </dev/null &
     sleep 2
     if "$hb" status 2>/dev/null | grep -q "status: running"; then
       step "已在后台启动 herdr 服务端（herdr server）；之后运行 herdr 会直接接上它"
