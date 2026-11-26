@@ -7559,7 +7559,14 @@
     }
     return out;
   }
-  async function loadExternal() {
+  let externalLoad = null;
+  function loadExternal() {
+    if (!externalLoad) {
+      externalLoad = refreshExternal().finally(() => { externalLoad = null; });
+    }
+    return externalLoad;
+  }
+  async function refreshExternal() {
     if (document.hidden && ext.length) return;
     let nextExt;
     try { nextExt = (await api("/api/external")).sessions || []; } catch { return; }
@@ -7903,7 +7910,7 @@
     primeThread(el, "x:" + id);
     resetEarlier(el, (c) => `/api/external/${encodeURIComponent(id)}/earlier?before=${c}`);
     extSoonN = 0;
-    if (!ext.some((e) => e.id === id)) await loadExternal();
+    if (!ext.some((e) => e.id === id)) void loadExternal();
     renderExtHead();
     const mine = () => view === "ext" && extCur === id;
     // The stream drops when the hub restarts or the computer reconnects:
