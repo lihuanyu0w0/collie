@@ -575,6 +575,7 @@ const storage = new Map();
 const docListeners = new Map();
 const winListeners = new Map();
 let liveES = null;
+let externalChatES = null;
 let sayResolver = null;
 let saySeq = 300;
 let uuidSeq = 0;
@@ -585,6 +586,7 @@ class FakeES {
     this.readyState = 1;
     this.ls = {};
     if (url === "/api/events") liveES = this;
+    if (url.endsWith("/chat")) externalChatES = this;
   }
   addEventListener(t, fn) { (this.ls[t] ||= []).push(fn); }
   emit(t, obj) {
@@ -687,6 +689,7 @@ ctx.globalThis = ctx;
 
 const hook = [
   "  window.__T = {",
+  "    openExt, loadExternal,",
   "    getSup: () => sup,",
   "    setSup: (s) => { sup = normSup(s); },",
   "    renderSuper: (o) => renderSuper(o),",
@@ -946,6 +949,29 @@ const mkEntry = (n, role, text, extra = {}) => ({
 
   T.closeThreadDrawer({ immediate: true });
   assert.equal(threadInnerWrites, 0, "entire session had ZERO #super-thread.innerHTML rebuilds");
+  // A slow session list must not block a cold external-chat link.
+  let listRequests = 0;
+  let finishList;
+  const previousFetch = ctx.fetch;
+  ctx.fetch = (url, init) => {
+    if (url !== "/api/external") return previousFetch(url, init);
+    listRequests++;
+    return new Promise((resolve) => { finishList = () => resolve(okJSON({ sessions: [] })); });
+  };
+  T.setView("ext");
+  const opening = T.openExt("example@node");
+  assert.equal(externalChatES?.url, "/api/external/example%40node/chat");
+  externalChatES.emit("patch", { base: 0, from: 0, msgs: [{ kind: "user", text: "visible immediately" }] });
+  assert.ok(getEl("#x-thread").innerHTML.includes("visible immediately"));
+  const refresh = T.loadExternal();
+  assert.equal(listRequests, 1, "polls share the pending list request");
+  finishList();
+  await Promise.all([opening, refresh]);
+  const nextRefresh = T.loadExternal();
+  assert.equal(listRequests, 2, "polling resumes after the list returns");
+  finishList();
+  await nextRefresh;
+
   console.log("OK: all typing, incremental DOM, quote-zero-flash, busy-debounce & drawer-widen checks passed");
   process.exit(0);
 })().catch((err) => {
