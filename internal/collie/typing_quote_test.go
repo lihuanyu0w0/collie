@@ -264,6 +264,8 @@ class DomNode {
   set parentElement(v) { this.parentNode = v; }
   get children() { return this.childNodes.filter((n) => n.nodeType === 1); }
   get firstChild() { return this.childNodes[0] || null; }
+  get lastElementChild() { return this.children.at(-1) || null; }
+  insertAdjacentHTML(position, html) { assert.equal(position, "beforeend"); parseHtmlInto(html, this); }
   get firstElementChild() { return this.childNodes.find((n) => n.nodeType === 1) || null; }
   get nextElementSibling() {
     if (!this.parentNode) return null;
@@ -1004,6 +1006,40 @@ const mkEntry = (n, role, text, extra = {}) => ({
   assert.equal(listRequests, 2, "polling resumes after the list returns");
   finishList();
   await nextRefresh;
+
+  // A finite read can win a stalled stream. A later SSE snapshot is authoritative,
+  // and a delayed response for a previous selection cannot replace the new one.
+  const previousTimer = ctx.setTimeout;
+  let fallback;
+  ctx.setTimeout = (fn, ms, ...args) => ms === 4000 ? (fallback = fn, 0) : previousTimer(fn, ms, ...args);
+  let resolveSnapshot;
+  ctx.fetch = (url, init) => url.endsWith("/snapshot")
+    ? new Promise((resolve) => { resolveSnapshot = (text) => resolve(okJSON({base: 0, from: 0, msgs: [{kind: "user", text}]})); })
+    : previousFetch(url, init);
+  await T.openExt("stalled");
+  const firstRead = fallback();
+  resolveSnapshot("first snapshot");
+  await firstRead;
+  assert.ok(getEl("#x-thread").innerHTML.includes("first snapshot"));
+  const patch = (text) => ({base: 0, from: 0, msgs: [{kind: "user", text}]});
+  externalChatES.emit("patch", patch("live update"));
+  assert.ok(getEl("#x-thread").innerHTML.includes("live update"));
+  await T.openExt("slow-snapshot");
+  const lateRead = fallback();
+  externalChatES.emit("patch", patch("stream won"));
+  resolveSnapshot("outdated snapshot");
+  await lateRead;
+  assert.ok(getEl("#x-thread").innerHTML.includes("stream won"));
+  await T.openExt("before-navigation");
+  const oldES = externalChatES;
+  const oldRead = fallback();
+  await T.openExt("after-navigation");
+  externalChatES.emit("patch", patch("right conversation"));
+  oldES.emit("gone", {});
+  resolveSnapshot("wrong conversation");
+  await oldRead;
+  assert.ok(getEl("#x-thread").innerHTML.includes("right conversation"));
+  ctx.setTimeout = previousTimer;
 
   console.log("OK: all typing, incremental DOM, quote-zero-flash, busy-debounce & drawer-widen checks passed");
   process.exit(0);

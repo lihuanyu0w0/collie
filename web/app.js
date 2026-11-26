@@ -8086,24 +8086,63 @@
     const mine = () => view === "ext" && extCur === id;
     // The stream drops when the hub restarts or the computer reconnects:
     // try again in a moment, keeping what is on screen.
-    let tries = 0;
+    let tries = 0, received = false;
     const connect = () => {
       const es = extStream = openES(`/api/external/${encodeURIComponent(id)}/chat`);
+      const here = () => mine() && extStream === es;
+      const show = (msgs) => {
+        keepThread("x:" + id, msgs);
+        drawThread(msgs, el, "这个会话还没有消息。");
+        extWorking();
+      };
+      // Some remote connections open the event stream but delay its first
+      // complete event. A finite read can populate the view in the meantime.
+      const fallback = setTimeout(async () => {
+        if (received || !here()) return;
+        if (el.querySelector(".thread-skel")) el.innerHTML = `<div class="thread-empty">正在读取远端会话记录…</div>`;
+        try {
+          const p = await api(`/api/external/${encodeURIComponent(id)}/snapshot`, { timeout: 12000 });
+          if (!received && here() && Array.isArray(p.msgs)) show(applyPatch(el, p));
+        } catch {
+          if (!received && here() && !el._msgs) el.innerHTML = `<div class="thread-empty">暂时读不到会话记录，正在等待实时连接…</div>`;
+        }
+      }, 4000);
       es.addEventListener("meta", (ev) => {
+        if (!here()) return;
         tries = 0; extSoonN = 0;
         if (!ext.some((e) => e.id === id)) loadExternal();
-        if (mine() && !JSON.parse(ev.data).structured) el.innerHTML = `<div class="thread-empty">还没有找到这个会话的记录。</div>`;
+        if (!JSON.parse(ev.data).structured) {
+          received = true;
+          clearTimeout(fallback);
+          el.innerHTML = `<div class="thread-empty">还没有找到这个会话的记录。</div>`;
+        }
       });
-      const show = (msgs) => { keepThread("x:" + id, msgs); if (mine()) { drawThread(msgs, el, "这个会话还没有消息。"); extWorking(); } };
-      el._redraw = () => show(threadMsgs(el));
-      es.addEventListener("patch", (ev) => mine() && show(applyPatch(el, JSON.parse(ev.data))));
-      es.addEventListener("messages", (ev) => { el._msgs = null; el._older = null; show(JSON.parse(ev.data)); }); // an older computer
-      es.addEventListener("gone", () => { closeExt(); if (mine()) renderExtHead(true); });
+      el._redraw = () => { if (here()) show(threadMsgs(el)); };
+      es.addEventListener("patch", (ev) => {
+        if (!here()) return;
+        received = true;
+        clearTimeout(fallback);
+        show(applyPatch(el, JSON.parse(ev.data)));
+      });
+      es.addEventListener("messages", (ev) => { // an older computer
+        if (!here()) return;
+        received = true;
+        clearTimeout(fallback);
+        el._msgs = null; el._older = null;
+        show(JSON.parse(ev.data));
+      });
+      es.addEventListener("gone", () => {
+        if (!here()) return;
+        clearTimeout(fallback);
+        if (el.querySelector(".thread-skel")) el.innerHTML = `<div class="thread-empty">这个会话已经结束了。</div>`;
+        closeExt();
+        renderExtHead(true);
+      });
       es.onerror = () => {
-        if (es.readyState !== EventSource.CLOSED || extStream !== es || !mine()) return;
+        if (!here() || es.readyState !== EventSource.CLOSED) return;
         if (++tries > 20) { renderExtHead(true); return; }
-        if (!el.querySelector(".msg")) el.innerHTML = `<div class="thread-empty">连不上那台电脑，正在重试…</div>`;
-        setTimeout(() => { if (extStream === es && mine()) connect(); }, Math.min(1000 * tries, 5000));
+        if (!el._msgs && !el.querySelector(".msg")) el.innerHTML = `<div class="thread-empty">连不上那台电脑，正在重试…</div>`;
+        setTimeout(() => { if (here()) connect(); }, Math.min(1000 * tries, 5000));
       };
     };
     connect();

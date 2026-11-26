@@ -151,6 +151,7 @@ func (s *Server) machineRoutes(mux *http.ServeMux, wrap func(http.HandlerFunc) h
 	mux.Handle("POST /api/seen", wrap(s.seenPane))
 	mux.Handle("GET /api/external", wrap(s.listExternal))
 	mux.Handle("GET /api/external/{id}/chat", wrap(s.streamExternal))
+	mux.Handle("GET /api/external/{id}/snapshot", wrap(s.externalSnapshot))
 	mux.Handle("GET /api/external/{id}/earlier", wrap(s.externalEarlier))
 	mux.Handle("POST /api/external/{id}/takeover", wrap(s.takeOverExternal))
 	mux.Handle("POST /api/external/{id}/send", wrap(s.sendExternal))
