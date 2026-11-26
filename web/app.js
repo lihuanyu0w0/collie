@@ -7934,9 +7934,13 @@
     $("#live-next").disabled = livePage === pages;
     const picker = $("#live-page");
     if (picker.length !== pages) {
+      if (pickOpen === picker) closePick();
       setHTML(picker, Array.from({ length: pages }, (_, i) => `<option value="${i + 1}">${i + 1} / ${pages}</option>`).join(""));
     }
-    if (picker.value !== String(livePage)) picker.value = String(livePage);
+    if (picker.value !== String(livePage)) {
+      picker.value = String(livePage);
+      syncPick(picker);
+    }
     const offset = (livePage - 1) * LIVE_PAGE_SIZE;
     setHTML($("#live-list"), live.slice(offset, offset + LIVE_PAGE_SIZE)
       .map((s) => s.pane_id ? itemHTML(s, wtMap, entries) : extRow(s)).join("")
