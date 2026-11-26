@@ -41,3 +41,36 @@ func TestExternalLive(t *testing.T) {
 		t.Logf("%s app=%q cwd=%s session=%s title=%q path=%s", e.ID, e.App, e.Cwd, e.Session, e.Title, e.path)
 	}
 }
+
+func TestLocateExternalCodex(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("CODEX_HOME", root)
+	now := time.Now().Truncate(time.Second)
+	writeRollout(t, root, "old", "/a", now, now.Add(-time.Minute), "")
+	pathA := writeRollout(t, root, "current", "/a", now, now, "")
+	pathB := writeRollout(t, root, "other", "/b", now, now.Add(time.Minute), "")
+	tests := []struct {
+		cwd              string
+		start            time.Time
+		wantPath, wantID string
+	}{
+		{"/a", now.Add(-time.Hour), pathA, "current"},
+		{"/a", now.Add(5 * time.Second), pathA, "current"},
+		{"/a", now.Add(6 * time.Second), "", ""},
+		{"/b", now, pathB, "other"},
+		{"/missing", now, "", ""},
+	}
+	var sessions []*External
+	for _, tc := range tests {
+		sessions = append(sessions, &External{Kind: "codex", Cwd: tc.cwd, Started: tc.start})
+	}
+	s := &Server{}
+	s.locateExternalCodex(sessions)
+	for i, tc := range tests {
+		e := sessions[i]
+		if e.path != tc.wantPath || e.Session != tc.wantID || (e.format == "codex") != (tc.wantPath != "") {
+			t.Errorf("cwd %s, start %v: got (%q, %q, %q), want path %q and session %q",
+				tc.cwd, tc.start, e.path, e.Session, e.format, tc.wantPath, tc.wantID)
+		}
+	}
+}

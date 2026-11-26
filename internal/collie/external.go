@@ -225,6 +225,7 @@ func (s *Server) externalSessions() []*External {
 		}
 	}
 	used := map[int]bool{}
+	var codex []*External
 	for _, p := range cands {
 		app, inHerdr := terminalApp(ps, p)
 		if r := regOf[p.pid]; r != nil {
@@ -235,8 +236,17 @@ func (s *Server) externalSessions() []*External {
 		}
 		kind := externalKinds[p.name]
 		e := &External{ID: fmt.Sprintf("%s-%d", kind, p.pid), Kind: kind, PID: p.pid, Cwd: cwds[p.pid], App: app, Started: now.Add(-p.age), Live: true}
-		s.locateExternal(e, p)
+		if kind == "codex" {
+			codex = append(codex, e)
+		} else {
+			s.locateExternal(e, p)
+		}
 		e.reg = regOf[p.pid]
+		list = append(list, e)
+	}
+	s.locateExternalCodex(codex)
+	listed := map[string]bool{}
+	for _, e := range list {
 		s.reachable(e)
 		if e.path != "" {
 			if fi, err := os.Stat(e.path); err == nil {
@@ -244,16 +254,12 @@ func (s *Server) externalSessions() []*External {
 			}
 			e.Title = firstUserLine(e.path, e.format)
 		}
-		list = append(list, e)
-	}
-	// The desktop apps' conversations, running or resting (desktop.go).
-	listed := map[string]bool{}
-	for _, e := range list {
 		e.CanTakeOver = e.Session != ""
 		if e.Session != "" {
 			listed[e.Session] = true
 		}
 	}
+	// The desktop apps' conversations, running or resting (desktop.go).
 	list = append(list, s.desktopSessions(regs, listed, now)...)
 	// Collie's own workers (a herdr pane while they run, its history after)
 	// are listed as Collie's, not as the computer's other sessions.
@@ -265,7 +271,7 @@ func (s *Server) externalSessions() []*External {
 	}
 	list = kept
 	sortSessions(list)
-	externalCache.at, externalCache.list = now, list
+	externalCache.at, externalCache.list = time.Now(), list
 	return list
 }
 
@@ -327,25 +333,6 @@ func (s *Server) locateExternal(e *External, p *proc) {
 				e.Session = strings.TrimSuffix(filepath.Base(f), ".jsonl")
 			}
 		}
-	case "codex":
-		root := envOr("CODEX_HOME", filepath.Join(s.home, ".codex"))
-		files, _ := filepath.Glob(filepath.Join(root, "sessions", "*", "*", "*", "rollout-*.jsonl"))
-		var best string
-		var bestAt time.Time
-		for _, f := range files {
-			fi, err := os.Stat(f)
-			if err != nil || fi.ModTime().Before(since) {
-				continue
-			}
-			id, cwd := codexMeta(f)
-			if cwd != e.Cwd || fi.ModTime().Before(bestAt) {
-				continue
-			}
-			best, bestAt, e.Session = f, fi.ModTime(), id
-		}
-		if best != "" {
-			e.path, e.format = best, "codex"
-		}
 	case "agy":
 		brain := filepath.Join(s.agyCLIHome(), "brain")
 		if id := agyConversationArg(p.args); id != "" {
@@ -380,6 +367,43 @@ func (s *Server) locateExternal(e *External, p *proc) {
 				continue
 			}
 			e.Session, e.path, e.format, bestAt = id, f, "agy", fi.ModTime()
+		}
+	}
+}
+
+// locateExternalCodex scans rollout headers once per discovery pass. Each
+// process uses the newest rollout in its cwd active since its own start.
+func (s *Server) locateExternalCodex(sessions []*External) {
+	if len(sessions) == 0 {
+		return
+	}
+	const slack = 5 * time.Second
+	oldest := sessions[0].Started
+	for _, e := range sessions {
+		if e.Started.Before(oldest) {
+			oldest = e.Started
+		}
+	}
+	cutoff := oldest.Add(-slack)
+	type rollout struct {
+		path, id string
+		updated  time.Time
+	}
+	latest := map[string]rollout{}
+	files, _ := filepath.Glob(filepath.Join(s.codexHome(), "sessions", "*", "*", "*", "rollout-*.jsonl"))
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		if err != nil || fi.ModTime().Before(cutoff) {
+			continue
+		}
+		id, cwd := codexMeta(f)
+		if !fi.ModTime().Before(latest[cwd].updated) {
+			latest[cwd] = rollout{f, id, fi.ModTime()}
+		}
+	}
+	for _, e := range sessions {
+		if r, ok := latest[e.Cwd]; ok && !r.updated.Before(e.Started.Add(-slack)) {
+			e.path, e.format, e.Session = r.path, "codex", r.id
 		}
 	}
 }
