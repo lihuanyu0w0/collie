@@ -7954,9 +7954,11 @@
     // 最近: newest first; Collie's own sessions are reached from its conversation.
     const collieWorkerNames = getWorkerLookup().byName;
     const collieRan = (name) => name === ROUTER || collieWorkerNames.has(name);
+    const sessionKey = (s) => JSON.stringify([s.hub || "", s.machine || "", s.session]);
+    const agyHistory = new Set(ext.filter((e) => e.app === "Antigravity CLI").map(sessionKey));
     const recent = [
       ...ext.filter((e) => !going(e)).map((e) => ({ id: e.id, t: +new Date(e.updated || e.started) || 0, html: extRow(e) })),
-      ...hist.filter((h) => !collieRan(h.name)).map((h) => ({ id: "h:" + h.id, t: +new Date(h.ended) || 0, html: histRow(h) })),
+      ...hist.filter((h) => !collieRan(h.name) && !(h.kind === "agy" && agyHistory.has(sessionKey(h)))).map((h) => ({ id: "h:" + h.id, t: +new Date(h.ended) || 0, html: histRow(h) })),
     ].sort((x, y) => y.t - x.t);
     let shown = extAll ? recent : recent.slice(0, RECENT_N);
     const cur = view === "ext" && extCur && !shown.some((x) => x.id === extCur) && recent.find((x) => x.id === extCur);

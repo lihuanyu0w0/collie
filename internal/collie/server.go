@@ -38,6 +38,8 @@ type Server struct {
 
 	startMu sync.Mutex
 	started map[string]time.Time // pane → when Collie started an agent there
+
+	agyResuming sync.Map // CLI history IDs currently starting in herdr
 }
 
 func (s *Server) markStarted(pane string) {

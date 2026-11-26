@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,6 +46,7 @@ const (
 	appClaude = "Claude 桌面版"
 	appCodex  = "Codex 桌面版"
 	appAgy    = "Antigravity 桌面版"
+	appAgyCLI = "Antigravity CLI"
 )
 
 // desktopRow is one conversation as an app's index lists it.
@@ -74,7 +76,18 @@ func (s *Server) desktopRows() ([]desktopRow, bool) {
 	var rows []desktopRow
 	rows = append(rows, s.claudeDesktopRows()...)
 	rows = append(rows, s.codexAppRows()...)
-	rows = append(rows, s.agyDesktopRows()...)
+	agyRows := s.agyDesktopRows()
+	for _, cli := range s.recentAgyCLI() {
+		// A CLI can import a desktop conversation with the same ID. Keep a
+		// running desktop turn, otherwise prefer the latest readable copy.
+		i := slices.IndexFunc(agyRows, func(r desktopRow) bool { return r.session == cli.session })
+		if i < 0 {
+			agyRows = append(agyRows, cli)
+		} else if d := agyRows[i]; !d.running && !d.waiting && (d.path == "" || !d.updated.After(cli.updated)) {
+			agyRows[i] = cli
+		}
+	}
+	rows = append(rows, agyRows...)
 	desktopCache.at, desktopCache.rows, desktopCache.app = time.Now(), rows, s.codexAppUp()
 	return rows, desktopCache.app
 }
@@ -143,6 +156,18 @@ func (s *Server) desktopSessions(regs map[int]*claudeReg, listed map[string]bool
 				e.ReadOnly = "这个对话现在没有在 Codex 里打开：在 Codex App 里点开它，就能从这里发消息"
 			}
 		case "agy":
+			if d.app == appAgyCLI {
+				switch {
+				case !filepath.IsAbs(d.cwd) || !isDir(d.cwd):
+					e.ReadOnly = "原工作目录不可用，可以在这里查看历史记录"
+				case !s.agyCLIResumeData(d.session):
+					e.ReadOnly = "只找到了聊天记录，缺少恢复会话所需的数据"
+				default:
+					e.CanTakeOver = true
+					e.ReadOnly = "这个 CLI 会话已退出"
+				}
+				break
+			}
 			e.Live = d.running || d.waiting
 			if d.running {
 				e.Status = "working"

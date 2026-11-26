@@ -189,6 +189,12 @@ var externalCache struct {
 	snapshot   atomic.Pointer[externalSnapshot]
 }
 
+func forgetExternalSessions() {
+	externalCache.Lock()
+	externalCache.snapshot.Store(nil)
+	externalCache.Unlock()
+}
+
 // externalSessions finds interactive agents on this machine outside herdr.
 func (s *Server) externalSessions() []*External {
 	externalCache.Lock()
@@ -239,12 +245,18 @@ func (s *Server) externalSessions() []*External {
 	threadNames := sync.OnceValue(s.uniqueCodexThreadNames)
 	used := map[int]bool{}
 	var codex []*External
+	listed := map[string]bool{}
 	for _, p := range cands {
 		app, inHerdr := terminalApp(ps, p)
 		if r := regOf[p.pid]; r != nil {
 			used[r.PID] = true
 		}
 		if inHerdr {
+			if externalKinds[p.name] == "agy" {
+				if id := agyConversationArg(p.args); id != "" {
+					listed[id] = true
+				}
+			}
 			continue
 		}
 		kind := externalKinds[p.name]
@@ -265,7 +277,6 @@ func (s *Server) externalSessions() []*External {
 		list = append(list, e)
 	}
 	s.locateExternalCodex(codex)
-	listed := map[string]bool{}
 	for _, e := range list {
 		s.reachable(e)
 		if e.path != "" {
@@ -685,7 +696,18 @@ func (s *Server) streamExternal(w http.ResponseWriter, r *http.Request) {
 // takeOverExternal stops an external agent and resumes its conversation in a
 // new herdr pane on the same machine, in the same directory.
 func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
-	e := s.externalByID(r.PathValue("id"))
+	id := r.PathValue("id")
+	if strings.HasPrefix(id, "ag-cli-") {
+		if _, busy := s.agyResuming.LoadOrStore(id, true); busy {
+			writeJSON(w, 409, map[string]any{"error": "正在恢复这个会话"})
+			return
+		}
+		defer s.agyResuming.Delete(id)
+		// A second viewer or a terminal may already have resumed it.
+		forgetExternalSessions()
+		defer forgetExternalSessions()
+	}
+	e := s.externalByID(id)
 	if e == nil {
 		writeJSON(w, 404, map[string]any{"error": "这个会话已经结束了"})
 		return
@@ -714,9 +736,7 @@ func (s *Server) takeOverExternal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	externalCache.Lock()
-	externalCache.snapshot.Store(nil)
-	externalCache.Unlock()
+	forgetExternalSessions()
 	name := e.Kind + "-" + strconv.Itoa(e.PID)
 	if e.PID == 0 {
 		name = e.Kind + "-" + strings.SplitN(e.Session, "-", 2)[0]

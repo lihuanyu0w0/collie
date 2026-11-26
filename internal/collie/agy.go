@@ -253,3 +253,93 @@ func (s *Server) agyCLIHome() string {
 	}
 	return filepath.Join(s.home, ".gemini", "antigravity")
 }
+
+// Only resume in a local workspace. A file URI for another host may have
+// the same path as an unrelated directory on this computer.
+func agyCLIWorkspace(raw string) string {
+	if filepath.IsAbs(raw) {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "file" || u.User != nil ||
+		(u.Host != "" && !strings.EqualFold(u.Host, "localhost")) || !filepath.IsAbs(u.Path) {
+		return ""
+	}
+	return u.Path
+}
+
+func (s *Server) agyCLIResumeData(id string) bool {
+	base := filepath.Join(s.home, ".gemini", "antigravity-cli", "conversations", id)
+	return isFile(base+".db") || isFile(base+".pb")
+}
+
+// recentAgyCLI uses transcript activity because early CLI sessions can have
+// zero timestamps in the summary index, even after the first user message.
+func (s *Server) recentAgyCLI() []desktopRow {
+	root := filepath.Join(s.home, ".gemini", "antigravity-cli")
+	brain := filepath.Join(root, "brain")
+	entries, err := os.ReadDir(brain)
+	if err != nil {
+		return nil
+	}
+	cutoff := time.Now().Add(-desktopWindow)
+	var candidates []desktopRow
+	for _, entry := range entries {
+		id := entry.Name()
+		if !entry.IsDir() || !conversationRe.MatchString(id) {
+			continue
+		}
+		path := filepath.Join(brain, id, ".system_generated", "logs", "transcript.jsonl")
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.ModTime().Before(cutoff) {
+			continue
+		}
+		candidates = append(candidates, desktopRow{id: "ag-cli-" + id, session: id, kind: "agy", app: appAgyCLI,
+			path: path, format: "agy", updated: info.ModTime()})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].updated.After(candidates[j].updated) })
+	var meta *sql.Stmt
+	if index := filepath.Join(root, "conversation_summaries.db"); isFile(index) {
+		db, err := sql.Open("sqlite", "file:"+index+"?mode=ro&_pragma=busy_timeout(2000)")
+		if err != nil {
+			return nil
+		}
+		defer db.Close()
+		meta, err = db.Prepare(`SELECT title, preview, workspace_uris, nesting_depth, killed
+			FROM conversation_summaries WHERE conversation_id = ?`)
+		if err != nil {
+			return nil
+		}
+		defer meta.Close()
+	}
+	var rows []desktopRow
+	for _, d := range candidates {
+		if meta != nil {
+			var title, preview, raw sql.NullString
+			var depth, killed int
+			err := meta.QueryRow(d.session).Scan(&title, &preview, &raw, &depth, &killed)
+			if (err != nil && err != sql.ErrNoRows) || depth != 0 || killed != 0 {
+				continue
+			}
+			d.title = messageTitle(title.String)
+			var uris []string
+			if json.Unmarshal([]byte(raw.String), &uris) == nil && len(uris) > 0 {
+				d.cwd = agyCLIWorkspace(uris[0])
+			}
+			if d.title == "" {
+				d.title = messageTitle(preview.String)
+			}
+		}
+		if d.title == "" {
+			d.title = firstUserLine(d.path, d.format)
+		}
+		rows = append(rows, d)
+		if len(rows) == desktopMax {
+			break
+		}
+	}
+	return rows
+}
